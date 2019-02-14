@@ -37,9 +37,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 
-private const val EXPORT_OPML_CODE = 101
-private const val IMPORT_OPML_CODE = 102
-private const val EDIT_FEED_CODE = 103
+const val EXPORT_OPML_CODE = 101
+const val IMPORT_OPML_CODE = 102
+const val EDIT_FEED_CODE = 103
 
 const val EXTRA_FEEDITEMS_TO_MARK_AS_NOTIFIED: String = "items_to_mark_as_notified"
 

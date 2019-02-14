@@ -1,19 +1,18 @@
 package com.nononsenseapps.feeder.ui
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.app.Activity
+import android.content.*
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.view.LayoutInflater
-import android.view.Menu
-import android.view.MenuInflater
-import android.view.MenuItem
-import android.view.View
-import android.view.ViewGroup
+import android.os.Environment
+import android.view.*
 import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Observer
+import androidx.navigation.fragment.findNavController
+import androidx.paging.PagedList
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -23,26 +22,16 @@ import com.nononsenseapps.feeder.coroutines.CoroutineScopedFragment
 import com.nononsenseapps.feeder.db.room.AppDatabase
 import com.nononsenseapps.feeder.db.room.ID_ALL_FEEDS
 import com.nononsenseapps.feeder.db.room.ID_UNSET
-import com.nononsenseapps.feeder.model.FeedItemsViewModel
-import com.nononsenseapps.feeder.model.FeedViewModel
-import com.nononsenseapps.feeder.model.PreviewItem
-import com.nononsenseapps.feeder.model.SYNC_BROADCAST
-import com.nononsenseapps.feeder.model.SYNC_BROADCAST_IS_ACTIVE
-import com.nononsenseapps.feeder.model.cancelNotification
-import com.nononsenseapps.feeder.model.getFeedItemsViewModel
-import com.nononsenseapps.feeder.model.getFeedViewModel
-import com.nononsenseapps.feeder.model.requestFeedSync
-import com.nononsenseapps.feeder.util.PrefUtils
-import com.nononsenseapps.feeder.util.TabletUtils
-import com.nononsenseapps.feeder.util.addDynamicShortcutToFeed
-import com.nononsenseapps.feeder.util.bundle
-import com.nononsenseapps.feeder.util.removeDynamicShortcutToFeed
-import com.nononsenseapps.feeder.util.reportShortcutToFeedUsed
-import com.nononsenseapps.feeder.util.setLong
-import com.nononsenseapps.feeder.util.setString
+import com.nononsenseapps.feeder.model.*
+import com.nononsenseapps.feeder.model.opml.exportOpml
+import com.nononsenseapps.feeder.model.opml.importOpml
+import com.nononsenseapps.feeder.ui.filepicker.MyFilePickerActivity
+import com.nononsenseapps.feeder.util.*
+import com.nononsenseapps.filepicker.AbstractFilePickerActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
 
 const val ARG_FEED_ID = "feed_id"
 const val ARG_FEED_TITLE = "feed_title"
@@ -65,6 +54,7 @@ class FeedFragment : CoroutineScopedFragment() {
     private var url: String? = ""
     private var feedTag: String? = ""
     private var firstFeedLoad: Boolean = true
+    private var displayTitle = ""
     private var customTitle = ""
     private var layoutManager: LinearLayoutManager? = null
     private var checkAllButton: View? = null
@@ -91,14 +81,17 @@ class FeedFragment : CoroutineScopedFragment() {
             title = arguments.getString(ARG_FEED_TITLE)
             url = arguments.getString(ARG_FEED_URL)
             feedTag = arguments.getString(ARG_FEED_TAG)
+        }
 
-            // It's a feedTag, use as title
-            if (id == ID_UNSET) {
+        when {
+            id == ID_UNSET && feedTag?.isEmpty() == false -> {
                 title = feedTag
             }
-
-            // Special feedTag
-            if (id == ID_ALL_FEEDS) {
+            id == ID_UNSET -> {
+                id = ID_ALL_FEEDS
+                title = getString(R.string.all_feeds)
+            }
+            id == ID_ALL_FEEDS -> {
                 title = getString(R.string.all_feeds)
             }
         }
@@ -110,7 +103,7 @@ class FeedFragment : CoroutineScopedFragment() {
         feedItemsViewModel = getFeedItemsViewModel(feedId = id, tag = feedTag
                 ?: "", onlyUnread = onlyUnread)
 
-        feedItemsViewModel?.liveDbPreviews?.observe(this, Observer {
+        feedItemsViewModel?.liveDbPreviews?.observe(this, Observer<PagedList<PreviewItem>> {
             adapter?.submitList(it)
             emptyView?.visibility = if (it.isEmpty()) View.VISIBLE else View.GONE
         })
@@ -122,11 +115,12 @@ class FeedFragment : CoroutineScopedFragment() {
                     it?.let { feed ->
                         this.title = feed.title
                         this.customTitle = feed.customTitle
+                        this.displayTitle = feed.displayTitle
                         this.url = feed.url.toString()
                         this.notify = feed.notify
                         this.feedTag = feed.tag
 
-                        (activity as BaseActivity).supportActionBar?.title = feed.displayTitle
+                        (activity as AppCompatActivity).supportActionBar?.title = feed.displayTitle
 
                         // Update state of notification toggle
                         activity?.invalidateOptionsMenu()
@@ -228,19 +222,19 @@ class FeedFragment : CoroutineScopedFragment() {
 
         // Set up the empty view
         emptyView = rootView.findViewById(android.R.id.empty)
-        emptyAddFeed = emptyView!!.findViewById(R.id.empty_add_feed)
+        emptyAddFeed = emptyView?.findViewById(R.id.empty_add_feed)
         @Suppress("DEPRECATION")
         (emptyAddFeed as TextView).text = android.text.Html.fromHtml(getString(R.string.empty_feed_add))
-        emptyOpenFeeds = emptyView!!.findViewById(R.id.empty_open_feeds)
+        emptyOpenFeeds = emptyView?.findViewById(R.id.empty_open_feeds)
         @Suppress("DEPRECATION")
         (emptyOpenFeeds as TextView).text = android.text.Html.fromHtml(getString(R.string.empty_feed_open))
 
-        emptyAddFeed!!.setOnClickListener {
+        emptyAddFeed?.setOnClickListener {
             startActivity(Intent(activity,
                     EditFeedActivity::class.java))
         }
 
-        emptyOpenFeeds!!.setOnClickListener { (activity as BaseActivity).openNavDrawer() }
+        emptyOpenFeeds?.setOnClickListener { (activity as NavigationActivity).openNavDrawer() }
 
         // specify an adapter
         adapter = FeedItemPagedListAdapter(activity!!, object : ActionCallback {
@@ -267,12 +261,9 @@ class FeedFragment : CoroutineScopedFragment() {
         })
         recyclerView!!.adapter = adapter
 
-        // check all button
-        checkAllButton = rootView.findViewById(R.id.checkall_button)
-        checkAllButton!!.setOnClickListener { markAsRead() }
-
         return rootView
     }
+
 
     private fun onSyncBroadcast(syncing: Boolean) {
         // Background syncs trigger the sync layout
@@ -284,17 +275,23 @@ class FeedFragment : CoroutineScopedFragment() {
     override fun onActivityCreated(bundle: Bundle?) {
         super.onActivityCreated(bundle)
 
-        val ab = (activity as BaseActivity).supportActionBar
-        ab?.title = title
-        recyclerView?.let {
+        (activity as AppCompatActivity).supportActionBar?.title = displayTitle
+        // TODO
+/*        recyclerView?.let {
             (activity as BaseActivity).enableActionBarAutoHide(it)
+        }*/
+
+        // check all button
+        (activity as NavigationActivity).fabOnClickListener = {
+            markAsRead()
         }
     }
 
     override fun onResume() {
         super.onResume()
         // List might be shorter than screen once item has been read
-        (activity as BaseActivity).showActionBar()
+        // TODO
+        //(activity as BaseActivity).showActionBar()
         // Listen on broadcasts
         androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(activity!!).registerReceiver(syncReceiver,
                 IntentFilter(SYNC_BROADCAST))
@@ -308,7 +305,7 @@ class FeedFragment : CoroutineScopedFragment() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu?, inflater: MenuInflater?) {
-        inflater!!.inflate(R.menu.feed_fragment, menu)
+        inflater!!.inflate(R.menu.feed, menu)
 
         // Don't forget super call here
         super.onCreateOptionsMenu(menu, inflater)
@@ -377,7 +374,7 @@ class FeedFragment : CoroutineScopedFragment() {
     private fun markAsRead() {
         // Cancel any notifications
         context?.applicationContext?.let { appContext ->
-            feedItemsViewModel?.liveDbPreviews?.value?.forEach{
+            feedItemsViewModel?.liveDbPreviews?.value?.forEach {
                 // Can be null in case of placeholder values
                 it?.id?.let { id ->
                     launch(Dispatchers.Default) {
@@ -391,9 +388,9 @@ class FeedFragment : CoroutineScopedFragment() {
     }
 
     override fun onOptionsItemSelected(menuItem: MenuItem): Boolean {
-        val id = menuItem.itemId.toLong()
+        val id = menuItem.itemId
         return when {
-            id == R.id.action_sync.toLong() -> {
+            id == R.id.action_sync -> {
                 // Sync all feeds when menu button pressed
                 requestFeedSync(
                         parallell = true,
@@ -402,7 +399,7 @@ class FeedFragment : CoroutineScopedFragment() {
                 )
                 true
             }
-            id == R.id.action_edit_feed.toLong() && this.id > ID_UNSET -> {
+            id == R.id.action_edit_feed && this.id > ID_UNSET -> {
                 this.id.let { feedId ->
                     val i = Intent(activity, EditFeedActivity::class.java)
                     // TODO do not animate the back movement here
@@ -417,7 +414,7 @@ class FeedFragment : CoroutineScopedFragment() {
 
                 true
             }
-            id == R.id.action_add_templated.toLong() && this.id > ID_UNSET -> {
+            id == R.id.action_add_templated && this.id > ID_UNSET -> {
                 val i = Intent(activity, EditFeedActivity::class.java)
                 // TODO do not animate the back movement here
                 i.putExtra(SHOULD_FINISH_BACK, true)
@@ -427,7 +424,7 @@ class FeedFragment : CoroutineScopedFragment() {
                 startActivity(i)
                 true
             }
-            id == R.id.action_delete_feed.toLong() && this.id > ID_UNSET -> {
+            id == R.id.action_delete_feed && this.id > ID_UNSET -> {
                 val feedId = this.id
                 val appContext = activity?.applicationContext
                 if (appContext != null) {
@@ -443,7 +440,7 @@ class FeedFragment : CoroutineScopedFragment() {
                 (activity as FeedActivity).showAllFeeds(true)
                 true
             }
-            id == R.id.action_only_unread.toLong() -> {
+            id == R.id.action_only_unread -> {
                 val onlyUnread = !menuItem.isChecked
                 PrefUtils.setPrefShowOnlyUnread(activity!!, onlyUnread)
                 menuItem.isChecked = onlyUnread
@@ -459,14 +456,98 @@ class FeedFragment : CoroutineScopedFragment() {
 
                 true
             }
-            id == R.id.action_notify.toLong() -> {
+            id == R.id.action_notify -> {
                 notify = !menuItem.isChecked
 
                 setNotifyMenuItemState(menuItem)
                 setNotifications(notify)
                 true
             }
+            id == R.id.action_add -> {
+                startActivityForResult(Intent(context, EditFeedActivity::class.java), EDIT_FEED_CODE)
+                true
+            }
+            id == R.id.action_opml_export -> {
+                // Choose file, then export
+                val intent: Intent
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+                    intent.type = "text/opml"
+                    intent.putExtra(Intent.EXTRA_TITLE, "feeder.opml")
+                } else {
+                    intent = Intent(context, MyFilePickerActivity::class.java)
+                    intent.putExtra(AbstractFilePickerActivity.EXTRA_MODE, AbstractFilePickerActivity.MODE_NEW_FILE)
+                    intent.putExtra(AbstractFilePickerActivity.EXTRA_ALLOW_EXISTING_FILE, true)
+                    intent.putExtra(AbstractFilePickerActivity.EXTRA_START_PATH,
+                            File(Environment.getExternalStorageDirectory(), "feeder.opml").path)
+                }
+                startActivityForResult(intent, EXPORT_OPML_CODE)
+                true
+            }
+            id == R.id.action_opml_import -> {
+                // Choose file
+                val intent: Intent
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    intent.addCategory(Intent.CATEGORY_OPENABLE)
+                    intent.type = "*/*"
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES,
+                            arrayOf("text/plain", "text/xml", "text/opml", "*/*"))
+                } else {
+                    intent = Intent(context, MyFilePickerActivity::class.java)
+                    intent.putExtra(AbstractFilePickerActivity.EXTRA_SINGLE_CLICK, true)
+                }
+                startActivityForResult(intent, IMPORT_OPML_CODE)
+                true
+            }
+            id == R.id.action_settings -> {
+                findNavController().navigate(R.id.settingsActivity)
+                true
+            }
+            id == R.id.action_reportbug -> {
+                try {
+                    startActivity(emailBugReportIntent())
+                } catch (e: ActivityNotFoundException) {
+                    Toast.makeText(context, R.string.no_email_client, Toast.LENGTH_SHORT).show()
+                }
+                true
+            }
             else -> super.onOptionsItemSelected(menuItem)
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK) {
+            return
+        }
+
+        when (requestCode) {
+            EXPORT_OPML_CODE -> {
+                val uri: Uri? = data?.data
+                if (uri != null) {
+                    val appContext = context!!.applicationContext
+                    launch(Dispatchers.Default) {
+                        exportOpml(appContext, uri)
+                    }
+                }
+            }
+            IMPORT_OPML_CODE -> {
+                val uri: Uri? = data?.data
+                if (uri != null) {
+                    val appContext = context!!.applicationContext
+                    launch(Dispatchers.Default) {
+                        importOpml(appContext, uri)
+                    }
+                }
+            }
+            EDIT_FEED_CODE -> {
+                data?.data?.lastPathSegment?.toLong()?.let { id ->
+                    findNavController().navigate(R.id.action_feedFragment_self, bundle {
+                        putLong(ARG_ID, id)
+                        putString(ARG_FEED_TAG, data.extras?.getString(ARG_FEED_TAG))
+                    })
+                }
+            }
         }
     }
 

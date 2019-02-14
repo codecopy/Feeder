@@ -4,17 +4,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.view.LayoutInflater
-import android.view.Menu
-import android.view.MenuInflater
-import android.view.MenuItem
-import android.view.View
-import android.view.ViewGroup
+import android.view.*
 import android.widget.TextView
 import androidx.appcompat.widget.ShareActionProvider
 import androidx.core.text.BidiFormatter
 import androidx.core.view.MenuItemCompat
 import androidx.fragment.app.Fragment
+import androidx.navigation.fragment.findNavController
 import com.nononsenseapps.feeder.R
 import com.nononsenseapps.feeder.coroutines.CoroutineScopedFragment
 import com.nononsenseapps.feeder.db.room.AppDatabase
@@ -26,6 +22,7 @@ import com.nononsenseapps.feeder.model.maxImageSize
 import com.nononsenseapps.feeder.ui.text.toSpannedWithNoImages
 import com.nononsenseapps.feeder.util.TabletUtils
 import com.nononsenseapps.feeder.util.asFeedItemFoo
+import com.nononsenseapps.feeder.util.bundle
 import com.nononsenseapps.feeder.util.openLinkInBrowser
 import com.nononsenseapps.feeder.views.ObservableScrollView
 import kotlinx.coroutines.Dispatchers
@@ -60,16 +57,9 @@ class ReaderFragment : CoroutineScopedFragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState != null) {
-            _id = savedInstanceState.getLong(ARG_ID)
-            rssItem = savedInstanceState.asFeedItemFoo()
 
-        } else if (rssItem == null && arguments != null) {
-            // Construct from arguments
-            arguments?.let { arguments ->
-                _id = arguments.getLong(ARG_ID, ID_UNSET)
-                rssItem = arguments.asFeedItemFoo()
-            }
+        arguments?.let { arguments ->
+            _id = arguments.getLong(ARG_ID, ID_UNSET)
         }
 
         if (_id > ID_UNSET) {
@@ -153,9 +143,10 @@ class ReaderFragment : CoroutineScopedFragment() {
 
     override fun onActivityCreated(bundle: Bundle?) {
         super.onActivityCreated(bundle)
-        scrollView.let {
+        // TODO
+/*        scrollView.let {
             (activity as BaseActivity).enableActionBarAutoHide(it)
-        }
+        }*/
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -202,13 +193,13 @@ class ReaderFragment : CoroutineScopedFragment() {
                 // Open in web view
                 rssItem?.let { rssItem ->
                     rssItem.link?.let { link ->
-                        context?.let { context ->
-                            val intent = Intent(context, ReaderWebViewActivity::class.java)
-                            intent.putExtra(ARG_URL, link)
-                            intent.putExtra(ARG_ENCLOSURE, rssItem.enclosureLink)
-                            startActivity(intent)
-                            activity?.finish()
-                        }
+                        findNavController().navigate(
+                                R.id.action_readerFragment_to_readerWebViewFragment,
+                                bundle {
+                                    putString(ARG_URL, link)
+                                    putString(ARG_ENCLOSURE, rssItem.enclosureLink)
+                                }
+                        )
                     }
                 }
                 true

@@ -24,6 +24,7 @@ buildscript {
     paging_version = '2.0.0'
     lifecycle_version = "2.0.0"
     room_version = "2.0.0"
+    nav_version = "1.0.0-beta01"
 
     espresso_version = "3.1.0"
     uiautomator_version = "2.2.0"
